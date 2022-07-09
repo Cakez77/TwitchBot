@@ -40,7 +40,7 @@ char *get_code()
         }
     }
 
-    ShellExecute(0, "open", "\"https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=opq32vgncw5znxeyhz4746u4v9mcet&redirect_uri=http://localhost:49152/Test&scope=chat:edit+chat:read\"",
+    ShellExecute(0, "open", "\"https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=opq32vgncw5znxeyhz4746u4v9mcet&redirect_uri=http://localhost:49152/Test&scope=chat:edit+chat:read+channel:manage:redemptions\"",
                  0, 0, SW_SHOWMINIMIZED);
 
     HTTP_REQUEST_ID requestID;

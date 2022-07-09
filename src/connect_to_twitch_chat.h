@@ -3,6 +3,7 @@
 #include "defines.h"
 #include "logger.h"
 #include "util.h"
+#include "sound.h"
 
 #include <ws2tcpip.h>
 #include <chrono>
@@ -58,7 +59,7 @@ void add_rude_person(RudePersonCollection *rudePersonCollection, const char *nam
     platform_write_file(RUDE_PERSON_FILE_NAME, (const char *)rudePersonCollection, sizeof(RudePersonCollection), true);
 }
 
-void connect_to_chat(char *token)
+void connect_to_chat(char *token, SoundState *soundState)
 {
     WSAData windowsSocketData;
     WSAStartup(MAKEWORD(1, 2), &windowsSocketData);
@@ -102,7 +103,9 @@ void connect_to_chat(char *token)
                     "!discord",
                     "!poe",
                     "!build",
-                    "!happy"};
+                    "!happy",
+                    "!demo",
+                    "!chatgame"};
 
                 char *replies[]{
                     "PRIVMSG #cakez77 :I'm currently working on a tower defence game CakezTD cakez7Rg %s. Idea-> https://www.youtube.com/watch?v=mC8oUPnN6Jg . Gameplay-> https://clips.twitch.tv/IcyMistyCodM4xHeh-CwaedeFFWsFZfbpO\r\n",
@@ -110,7 +113,9 @@ void connect_to_chat(char *token)
                     "PRIVMSG #cakez77 :Come join our Discord  %s cakez7E -> https://discord.gg/KUCHXVcSFA\r\n",
                     "PRIVMSG #cakez77 :Streaming Path of Exile at the end of every programming Stream, if you want to support me %s, keep watching!\r\n",
                     "PRIVMSG #cakez77 :Building towards a Raider that uses Ice %s, https://pastebin.com/TDtLLsEN\r\n",
-                    "PRIVMSG #cakez77 :Are you happy? %s like this? -> peepoClap cakez7Rub cakez7Rub2 cakez7Rub cakez7Rub2 peepoClap LUL\r\n"};
+                    "PRIVMSG #cakez77 :Are you happy? %s like this? -> peepoClap cakez7Rub cakez7Rub2 cakez7Rub cakez7Rub2 peepoClap LUL\r\n",
+                    "PRIVMSG #cakez77 :Free Demo available at -> https://cakez77.itch.io/cakeztd <- I hope you like it %s!\r\n",
+                    "PRIVMSG #cakez77 :You wanna build a Game with us, %s? -> https://github.com/Cakez77/CommunityGame \r\n"};
 
                 uint32_t fileSize;
                 RudePersonCollection *rudePersonsData = (RudePersonCollection *)platform_read_file(RUDE_PERSON_FILE_NAME, &fileSize);
@@ -156,11 +161,17 @@ void connect_to_chat(char *token)
                         char *userBegin = 0;
                         uint32_t length = 0;
                         char userName[200] = {};
+
                         while (char c = *(msgBegin++))
                         {
                             if (c == '@')
                             {
                                 userBegin = msgBegin - 1;
+                            }
+
+                            if (c == '\r' || c == '\n')
+                            {
+                                *(msgBegin - 1) = ' ';
                             }
 
                             if (userBegin)
@@ -178,7 +189,7 @@ void connect_to_chat(char *token)
                                 break;
                             }
                         }
-                        
+
                         to_lower_case(msgBegin);
 
                         for (uint32_t i = 0; i < ArraySize(commands); i++)
@@ -193,7 +204,6 @@ void connect_to_chat(char *token)
                                 break;
                             }
                         }
-
 
                         if (strstr(msgBegin, "!commands"))
                         {
@@ -219,8 +229,8 @@ void connect_to_chat(char *token)
                                 msg[offset++] = ' ';
                             }
 
-                            offset-=2;
-                            
+                            offset -= 2;
+
                             msg[offset++] = '\r';
                             msg[offset++] = '\n';
 
@@ -330,6 +340,26 @@ void connect_to_chat(char *token)
     {
         CAKEZ_TRACE(0, "Failed getting addressinfo");
     }
+}
+
+bool contains_prefix(const char *prefix, const char *text)
+{
+    bool result = false;
+    if (prefix && text)
+    {
+        result = true;
+        uint32_t index = 0;
+        while (char c = *(prefix++))
+        {
+            if (c != text[index++])
+            {
+                result = false;
+                break;
+            }
+        }
+    }
+
+    return result;
 }
 
 bool str_cmp(const char *a, const char *b)

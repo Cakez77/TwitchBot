@@ -274,10 +274,11 @@ static int hdr_valid(const uint8_t *h)
 
 static int hdr_compare(const uint8_t *h1, const uint8_t *h2)
 {
-    return hdr_valid(h2) &&
-        ((h1[1] ^ h2[1]) & 0xFE) == 0 &&
-        ((h1[2] ^ h2[2]) & 0x0C) == 0 &&
-        !(HDR_IS_FREE_FORMAT(h1) ^ HDR_IS_FREE_FORMAT(h2));
+    int headerPart1 = ((h1[1] ^ h2[1]) & 0xFE) == 0;
+    int headerPart2 = ((h1[2] ^ h2[2]) & 0x0C) == 0;
+    int freeFormat = (HDR_IS_FREE_FORMAT(h1) ^ HDR_IS_FREE_FORMAT(h2));
+    int value = hdr_valid(h2) && headerPart1 && headerPart2 && !freeFormat;
+    return value;
 }
 
 static unsigned hdr_bitrate_kbps(const uint8_t *h)
@@ -315,7 +316,8 @@ static int hdr_frame_bytes(const uint8_t *h, int free_format_size)
 
 static int hdr_padding(const uint8_t *h)
 {
-    return HDR_TEST_PADDING(h) ? (HDR_IS_LAYER_1(h) ? 4 : 1) : 0;
+    int padding = HDR_TEST_PADDING(h) ? (HDR_IS_LAYER_1(h) ? 4 : 1) : 0;
+    return padding;
 }
 
 #ifndef MINIMP3_ONLY_MP3

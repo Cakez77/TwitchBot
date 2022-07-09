@@ -3,7 +3,7 @@
 #include <cstdint>
 #define BIT(x) (1 << x)
 
-#define internal static
+// #define internal static
 #define global_variable static
 
 #define ArraySize(arr) sizeof((arr)) / sizeof((arr)[0])
@@ -13,6 +13,8 @@
 #define GB(x) ((uint64_t)1024 * MB(x))
 
 #define INVALID_IDX UINT32_MAX
+
+#define C_PI 3.14159265358979323846
 
 // clang-format on
 // clang-format off

@@ -2,6 +2,7 @@
 
 #include "defines.h"
 #include "huffman_tables.h"
+#include "iso_spec_talbes.h"
 
 //##############################################################
 //          Stuctures representing the Data Layout
@@ -172,12 +173,14 @@ struct MP3File
     MP3Frame frames[1000];
 };
 
-bool parse_mp3(char *data, uint32_t lengthInBytes)
+bool parse_mp3(char *data, uint32_t lengthInBytes, float *pcmBuffer)
 {
     MP3Frame frame = {};
     Id3v2Tag tag = *(Id3v2Tag *)data;
     // Find the FrameSynchronizer
     {
+        uint32_t frameCounter = 0;
+
         for (uint32_t i = 0; i < lengthInBytes - sizeof(MP3FrameHeader); i++)
         {
             MP3FrameHeader possibleHeader = *((MP3FrameHeader *)(data + i));
@@ -226,6 +229,14 @@ bool parse_mp3(char *data, uint32_t lengthInBytes)
                     case MP3_LAYER_I:
                         CAKEZ_TRACE("MPEG LAYER I");
                         break;
+                    }
+                }
+
+                // Check for Padding Bit
+                {
+                    if (possibleHeader.paddingBit)
+                    {
+                        CAKEZ_TRACE("Frame is padded by 1 Byte");
                     }
                 }
 
@@ -412,243 +423,131 @@ bool parse_mp3(char *data, uint32_t lengthInBytes)
                     }
                 }
 
-                /**
-                 * Side Information contains Data about ...
-                 */
-                // Extract the Side Information
+                // Extract data from Side Information
                 {
-                    //TODO: create get_bits function
-                    // uint32_t share = (uint32_t)sideInformation.shareFirstTwoBits << 2 + sideInformation.shareLastTwoBits;
-                    uint32_t mainDataBegin = ((uint32_t)sideInformation.mainDataBeginFirst8Bits << 1) +
-                                             sideInformation.mainDataBeginLastBit;
-                    uint32_t bigValues = ((uint32_t)sideInformation.bigValuesFirst3Bits << 6) +
-                                         sideInformation.bigValuesLast6Bits;
-                    uint32_t part2_3_length = ((uint32_t)sideInformation.part2_3_lengthFirst7Bits << 5) +
-                                              sideInformation.part2_3_lengthLast5Bits;
-                    uint32_t globalGain = ((uint32_t)sideInformation.globalGainFirstTwoBits << 6) +
-                                          sideInformation.globalGainLast6Bits;
-                    uint32_t scaleFacComp = ((uint32_t)sideInformation.scaleFacCompFirstTwoBits << 7) +
-                                            sideInformation.scaleFacCompLast7Bits;
+                    uint8_t *sideInfoStart = (uint8_t *)(data + i + sizeof(MP3FrameHeader));
+                    BitStream bitStream = {};
+                    bitStream.start = sideInfoStart;
+                    bitStream.numberOfBits = frame.sizeInBytes * 8;
 
-                    // Extract data from Side Information
+                    if (!possibleHeader.protectionBit)
                     {
-                        uint8_t *sideInfoStart = (uint8_t *)(data + i + sizeof(MP3FrameHeader));
-                        BitStream bitStream = {};
-                        bitStream.start = sideInfoStart;
-                        bitStream.numberOfBits = frame.sizeInBytes * 8;
+                        get_bits(&bitStream, 16);
+                    }
 
-                        uint32_t mainDataBegin = get_bits(&bitStream, 9);
-                        uint32_t part2_3_length = get_bits(&bitStream, 12);
-                        uint32_t bigValues = get_bits(&bitStream, 9);
-                        uint32_t globalGain = get_bits(&bitStream, 8);
-                        uint32_t scaleFacComp = get_bits(&bitStream, 9);
+                    uint32_t mainDataBegin = get_bits(&bitStream, 9);
+                    uint32_t part2_3_length = get_bits(&bitStream, 12);
+                    uint32_t bigValues = get_bits(&bitStream, 9);
+                    uint32_t globalGain = get_bits(&bitStream, 8);
+                    uint32_t scaleFacComp = get_bits(&bitStream, 9);
 
-                        uint32_t windowSwitching = get_bits(&bitStream, 1);
-                        uint32_t blockType = 0;
-                        if (windowSwitching)
-                        {
-                            CAKEZ_ASSERT(0, "Window Switching Sadge!");
-                        }
+                    uint32_t windowSwitching = get_bits(&bitStream, 1);
+                    uint32_t blockType = 0;
+                    if (windowSwitching)
+                    {
+                        CAKEZ_ASSERT(0, "Window Switching Sadge!");
+                    }
 
-                        uint32_t tableIndices[3] = {};
+                    uint32_t tableIndices[3] = {};
 
-                        // Extract the table Index for every Region
-                        for (uint32_t i = 0; i < 3; i++)
-                        {
-                            // Are these the Indices into the Huffman Tables?
-                            tableIndices[i] = get_bits(&bitStream, 5);
-                        }
+                    // Extract the table Index for every Region
+                    for (uint32_t i = 0; i < 3; i++)
+                    {
+                        // Are these the Indices into the Huffman Tables?
+                        tableIndices[i] = get_bits(&bitStream, 5);
+                    }
 
-                        uint32_t region0Count = get_bits(&bitStream, 4);
-                        uint32_t region1Count = get_bits(&bitStream, 3);
-                        // Since this is MP3 Version 2 we don't get the preflag
-                        uint32_t preflag = false ? get_bits(&bitStream, 1) : 0;
+                    uint32_t region0Count = get_bits(&bitStream, 4);
+                    uint32_t region1Count = get_bits(&bitStream, 3);
+                    // Since this is MP3 Version 2 we don't get the preflag
+                    uint32_t preflag = false ? get_bits(&bitStream, 1) : 0;
 
-                        uint32_t scaleFacScale = get_bits(&bitStream, 1);
-                        uint32_t count1Table = get_bits(&bitStream, 1);
+                    uint32_t scaleFacScale = get_bits(&bitStream, 1);
+                    uint32_t count1Table = get_bits(&bitStream, 1);
 
-                        // Now we start reading from part2_3_legnth (Scalefactors + Huffman Data)
-                        uint32_t bitsReadBeforePart2_3 = bitStream.bitsRead;
+                    // Now we start reading from part2_3_legnth (Scalefactors + Huffman Data)
+                    uint32_t bitsReadBeforePart2_3 = bitStream.bitsRead;
 
-                        uint32_t slen1 = (scaleFacComp >> 4) / 5;
-                        uint32_t slen2 = (scaleFacComp >> 4) % 5;
-                        uint32_t slen3 = (scaleFacComp % 16) >> 2;
-                        uint32_t slen4 = scaleFacComp % 4;
+                    uint32_t slen1 = (scaleFacComp >> 4) / 5;
+                    uint32_t slen2 = (scaleFacComp >> 4) % 5;
+                    uint32_t slen3 = (scaleFacComp % 16) >> 2;
+                    uint32_t slen4 = scaleFacComp % 4;
 
-                        /** 
+                    /** 
                          * Since block type is 0 (because window switching flag = 0)
                          * we define the number of scale factor bands as follows
                         */
-                        uint32_t nr_of_sfb_1 = 6;
-                        uint32_t nr_of_sfb_2 = 5;
-                        uint32_t nr_of_sfb_3 = 5;
-                        uint32_t nr_of_sfb_4 = 5;
+                    uint32_t nr_of_sfb_1 = 6;
+                    uint32_t nr_of_sfb_2 = 5;
+                    uint32_t nr_of_sfb_3 = 5;
+                    uint32_t nr_of_sfb_4 = 5;
 
-                        uint32_t scaleFacLengthTable[21] = {
-                            // Lengths for Region 0
-                            slen1, slen1, slen1, slen1, slen1, slen1,
-                            // Lengths for Region 1
-                            slen2, slen2, slen2, slen2, slen2,
-                            // Lengths for Region 2
-                            slen3, slen3, slen3, slen3, slen3,
-                            // Lengths for Region 3
-                            slen4, slen4, slen4, slen4, slen4};
+                    uint32_t scaleFacLengthTable[21] = {
+                        // Lengths for Region 0
+                        slen1, slen1, slen1, slen1, slen1, slen1,
+                        // Lengths for Region 1
+                        slen2, slen2, slen2, slen2, slen2,
+                        // Lengths for Region 2
+                        slen3, slen3, slen3, slen3, slen3,
+                        // Lengths for Region 3
+                        slen4, slen4, slen4, slen4, slen4};
 
-                        uint32_t granuleCount = 1;
-                        uint32_t channelCount = 1;
-                        uint32_t scaleFacTable[21] = {};
+                    uint32_t granuleCount = 1;
+                    uint32_t channelCount = 1;
+                    uint32_t scaleFacTable[21] = {};
 
-                        for (uint32_t g = 0; g < granuleCount; g++)
+                    for (uint32_t g = 0; g < granuleCount; g++)
+                    {
+                        for (uint32_t c = 0; c < channelCount; c++)
                         {
-                            for (uint32_t c = 0; c < channelCount; c++)
+                            for (uint32_t sfb = 0; sfb < 21; sfb++)
                             {
-                                for (uint32_t sfb = 0; sfb < 21; sfb++)
-                                {
-                                    scaleFacTable[sfb] = get_bits(&bitStream, scaleFacLengthTable[sfb]);
-                                }
+                                scaleFacTable[sfb] = get_bits(&bitStream, scaleFacLengthTable[sfb]);
                             }
                         }
+                    }
 
-                        // Read Huffman Data
+                    int somethingSamples[576] = {};
+                    // Read Huffman Data
+                    {
+
+                        uint32_t sampleCount = 0;
+
+                        // Decode Pairs from Huffman Data
+                        uint32_t tableSelectIdx = 0;
+                        uint32_t scaleFactorBandIdx = 0;
+                        uint32_t region_counts[3] =
+                            {
+                                region0Count,
+                                region1Count,
+                                255 // region2Count goes up until bigValues, 255 always exceeds that,
+                            };
+
+                        uint32_t decodedPairCount = 0;
+                        while (decodedPairCount < bigValues)
                         {
-                            struct ScaleFactorBand
+                            uint32_t scaleFactorBandCount = region_counts[tableSelectIdx];
+                            uint32_t tableIdx = tableIndices[tableSelectIdx];
+                            HuffmanTable huffmanTable = get_huffman_table(tableIdx);
+                            uint32_t linbits = linbitsTables[tableIdx];
+
+                            for (uint32_t i = 0; i <= scaleFactorBandCount; i++)
                             {
-                                uint32_t width;
-                                uint32_t startScaledFrequencyIdx; // This has to do with scaled Frequency
-                                uint32_t endScaledFrequencyIdx;
-                            };
-
-                            ScaleFactorBand scaleFactorBands[21] = {
-                                //width, index_of_start, index_of_end
-                                {6, 0, 5},      //0
-                                {6, 6, 11},     //1
-                                {6, 12, 17},    //2
-                                {6, 18, 23},    //3
-                                {6, 24, 29},    //4
-                                {6, 30, 35},    //5
-                                {8, 36, 43},    //6
-                                {10, 44, 53},   //7
-                                {12, 54, 65},   //8
-                                {14, 66, 79},   //9
-                                {16, 80, 95},   //10
-                                {20, 96, 115},  //11
-                                {24, 116, 139}, //12
-                                {28, 140, 167}, //13
-                                {32, 168, 199}, //14
-                                {38, 200, 237}, //15
-                                {46, 238, 283}, //16
-                                {52, 284, 335}, //17
-                                {60, 336, 395}, //18
-                                {68, 396, 463}, //19
-                                {58, 464, 521}  //20
-                            };
-
-                            uint32_t sampleCount = 0;
-                            int somethingSamples[576] = {};
-
-                            // Decode Pairs from Huffman Data
-                            uint32_t tableSelectIdx = 0;
-                            uint32_t scaleFactorBandIdx = 0;
-                            uint32_t region_counts[3] =
+                                if (decodedPairCount >= bigValues)
                                 {
-                                    region0Count,
-                                    region1Count,
-                                    255 // region2Count goes up until bigValues, 255 always exceeds that,
-                                };
-
-                            uint32_t decodedPairCount = 0;
-                            while (decodedPairCount < bigValues)
-                            {
-                                uint32_t scaleFactorBandCount = region_counts[tableSelectIdx];
-                                uint32_t tableIdx = tableIndices[tableSelectIdx];
-                                HuffmanTable huffmanTable = get_huffman_table(tableIdx);
-                                uint32_t linbits = linbitsTables[tableIdx];
-
-                                for (uint32_t i = 0; i <= scaleFactorBandCount; i++)
-                                {
-                                    if (decodedPairCount >= bigValues)
-                                    {
-                                        break;
-                                    }
-
-                                    uint32_t numberOfSamplesToDecode = scaleFactorBands[scaleFactorBandIdx].width;
-                                    uint32_t numberOfPairs = numberOfSamplesToDecode / 2;
-
-                                    // Limit the pairs/samples to bigValues * 2
-                                    if (numberOfPairs > bigValues - decodedPairCount)
-                                    {
-                                        numberOfPairs = bigValues - decodedPairCount;
-                                    }
-
-                                    for (uint32_t j = 0; j < numberOfPairs; j++)
-                                    {
-                                        int number = 0;
-                                        uint32_t hlen = 0;
-                                        bool foundLeaf = false;
-
-                                        while (!foundLeaf)
-                                        {
-                                            hlen++;
-                                            int bit = get_bits(&bitStream, 1);
-                                            number = (number << 1) + bit;
-
-                                            for (uint32_t k = 0; k < huffmanTable.entryCount; k++)
-                                            {
-                                                if (huffmanTable.huffmanEntries[k].hlen == hlen &&
-                                                    huffmanTable.huffmanEntries[k].code == number)
-                                                {
-                                                    int x = huffmanTable.huffmanEntries[k].x;
-                                                    int y = huffmanTable.huffmanEntries[k].y;
-
-                                                    if (x == 15)
-                                                    {
-                                                        x += get_bits(&bitStream, linbits);
-                                                    }
-
-                                                    if (x > 0 && get_bits(&bitStream, 1) == 1)
-                                                    {
-                                                        x = -x;
-                                                    }
-                                                    if (y == 15)
-                                                    {
-                                                        y += get_bits(&bitStream, linbits);
-                                                    }
-
-                                                    if (y > 0 && get_bits(&bitStream, 1) == 1)
-                                                    {
-                                                        y = -y;
-                                                    }
-
-                                                    somethingSamples[sampleCount++] = x;
-                                                    somethingSamples[sampleCount++] = y;
-
-                                                    foundLeaf = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        // Every Huffman Entriy gives us two Samples
-                                        decodedPairCount++;
-                                    }
-
-                                    // Look at next Scalefactor Band
-                                    scaleFactorBandIdx++;
+                                    break;
                                 }
 
-                                tableSelectIdx++;
-                            }
+                                uint32_t numberOfSamplesToDecode = scaleFactorBands[scaleFactorBandIdx].width;
+                                uint32_t numberOfPairs = numberOfSamplesToDecode / 2;
 
-                            // Decode count 1 region
-                            {
-                                Count1RegionTable tableIdx = TABLE_A;
-                                if (count1Table)
+                                // Limit the pairs/samples to bigValues * 2
+                                if (numberOfPairs > bigValues - decodedPairCount)
                                 {
-                                    tableIdx = TABLE_B;
+                                    numberOfPairs = bigValues - decodedPairCount;
                                 }
-                                HuffmanTableCount1Region huffmanTable = count1RegionTables[tableIdx];
 
-                                while (bitStream.bitsRead - bitsReadBeforePart2_3 < part2_3_length)
+                                for (uint32_t j = 0; j < numberOfPairs; j++)
                                 {
                                     int number = 0;
                                     uint32_t hlen = 0;
@@ -665,24 +564,21 @@ bool parse_mp3(char *data, uint32_t lengthInBytes)
                                             if (huffmanTable.huffmanEntries[k].hlen == hlen &&
                                                 huffmanTable.huffmanEntries[k].code == number)
                                             {
-                                                int v = huffmanTable.huffmanEntries[k].v;
-                                                int w = huffmanTable.huffmanEntries[k].w;
                                                 int x = huffmanTable.huffmanEntries[k].x;
                                                 int y = huffmanTable.huffmanEntries[k].y;
 
-                                                if (v > 0 && get_bits(&bitStream, 1) == 1)
+                                                if (x == 15)
                                                 {
-                                                    v = -v;
-                                                }
-
-                                                if (w > 0 && get_bits(&bitStream, 1) == 1)
-                                                {
-                                                    w = -w;
+                                                    x += get_bits(&bitStream, linbits);
                                                 }
 
                                                 if (x > 0 && get_bits(&bitStream, 1) == 1)
                                                 {
                                                     x = -x;
+                                                }
+                                                if (y == 15)
+                                                {
+                                                    y += get_bits(&bitStream, linbits);
                                                 }
 
                                                 if (y > 0 && get_bits(&bitStream, 1) == 1)
@@ -690,8 +586,6 @@ bool parse_mp3(char *data, uint32_t lengthInBytes)
                                                     y = -y;
                                                 }
 
-                                                somethingSamples[sampleCount++] = v;
-                                                somethingSamples[sampleCount++] = w;
                                                 somethingSamples[sampleCount++] = x;
                                                 somethingSamples[sampleCount++] = y;
 
@@ -700,120 +594,329 @@ bool parse_mp3(char *data, uint32_t lengthInBytes)
                                             }
                                         }
                                     }
+
+                                    // Every Huffman Entriy gives us two Samples
+                                    decodedPairCount++;
                                 }
 
-                                // Zero out last samples
-                                for (uint32_t i = sampleCount; i < 576; i++)
-                                {
-                                    somethingSamples[i] = 0;
-                                }
+                                // Look at next Scalefactor Band
+                                scaleFactorBandIdx++;
                             }
 
-                            uint32_t sampleIdx = 0;
-                            float floatSamples[576] = {};
+                            tableSelectIdx++;
+                        }
 
-                            // Requantize The Samples
+                        // Decode count 1 region
+                        {
+                            Count1RegionTable tableIdx = TABLE_A;
+                            if (count1Table)
                             {
-                                float scaleFacMultiplyer = scaleFacScale ? 1.0f : 0.5f;
+                                tableIdx = TABLE_B;
+                            }
+                            HuffmanTableCount1Region huffmanTable = count1RegionTables[tableIdx];
 
-                                for (scaleFactorBandIdx = 0; scaleFactorBandIdx < 21; scaleFactorBandIdx++)
+                            while (bitStream.bitsRead - bitsReadBeforePart2_3 < part2_3_length)
+                            {
+                                int number = 0;
+                                uint32_t hlen = 0;
+                                bool foundLeaf = false;
+
+                                while (!foundLeaf)
                                 {
-                                    uint32_t sampleCount = scaleFactorBands[scaleFactorBandIdx].width;
-                                    float scaleFac = (float)scaleFacTable[scaleFactorBandIdx];
+                                    hlen++;
+                                    int bit = get_bits(&bitStream, 1);
+                                    number = (number << 1) + bit;
 
-                                    float D = scaleFacMultiplyer * scaleFac; /*+ preflag * pretab */
-
-                                    float C = 1.0f / 4.0f * ((float)globalGain - 210.0f); // 210 is per spec
-
-                                    // Scale the Samples
+                                    for (uint32_t k = 0; k < huffmanTable.entryCount; k++)
                                     {
-                                        for (uint32_t i = 0; i < sampleCount; i++)
+                                        if (huffmanTable.huffmanEntries[k].hlen == hlen &&
+                                            huffmanTable.huffmanEntries[k].code == number)
                                         {
-                                            int sample = somethingSamples[sampleIdx];
+                                            int v = huffmanTable.huffmanEntries[k].v;
+                                            int w = huffmanTable.huffmanEntries[k].w;
+                                            int x = huffmanTable.huffmanEntries[k].x;
+                                            int y = huffmanTable.huffmanEntries[k].y;
 
-                                            if (sample < 0)
+                                            if (v > 0 && get_bits(&bitStream, 1) == 1)
                                             {
-                                                floatSamples[sampleIdx] =
-                                                    -(float)(pow(-sample, 4.0 / 3.0) * pow(2, (double)C) * pow(2, (double)D));
-                                            }
-                                            else
-                                            {
-                                                floatSamples[sampleIdx] =
-                                                    (float)(pow(sample, 4.0 / 3.0) * pow(2, (double)C) * pow(2, (double)D));
+                                                v = -v;
                                             }
 
-                                            sampleIdx++;
+                                            if (w > 0 && get_bits(&bitStream, 1) == 1)
+                                            {
+                                                w = -w;
+                                            }
+
+                                            if (x > 0 && get_bits(&bitStream, 1) == 1)
+                                            {
+                                                x = -x;
+                                            }
+
+                                            if (y > 0 && get_bits(&bitStream, 1) == 1)
+                                            {
+                                                y = -y;
+                                            }
+
+                                            somethingSamples[sampleCount++] = v;
+                                            somethingSamples[sampleCount++] = w;
+                                            somethingSamples[sampleCount++] = x;
+                                            somethingSamples[sampleCount++] = y;
+
+                                            foundLeaf = true;
+                                            break;
                                         }
                                     }
                                 }
                             }
 
-                            // Reorder the Samples
+                            // Zero out last samples
+                            for (uint32_t i = sampleCount; i < 576; i++)
                             {
-                                if (windowSwitching /*blockType == 2*/)
-                                {
-                                    CAKEZ_ASSERT(0, "We need to reorder");
-                                }
-                            }
-
-                            float antiAliasSamples[576] = {};
-
-                            // Maybe I need to work on the float Samples
-                            memcpy(antiAliasSamples, floatSamples, 576*sizeof(float));
-
-                            // Antialiase the Samples
-                            {
-                                float butterflyCoefficients[2][8] =
-                                    {{0.85749293f, 0.88174200f, 0.94962865f, 0.98331459f, 0.99551782f, 0.99916056f, 0.99989920f, 0.99999316f},
-                                     {-0.51449576f, -0.47173197f, -0.31337745f, -0.18191320f, -0.09457419f, -0.04096558f, -0.01419856f, -0.00369997f}};
-
-                                uint32_t scaleFacBandCount = 0;
-                                if (blockType != 0b10)
-                                {
-                                    scaleFacBandCount = 32;
-                                }
-                                else
-                                {
-                                    CAKEZ_ASSERT(0, "Check for mixed Blocks");
-                                    // if(mixed_block_flag[gr][ch]==’0’)
-                                    // sb_amount=0;
-                                    // else
-                                    // if((IDex==’0’)&&(sampling_frequency==’10’))
-                                    // sb_amount=4;
-                                    // else
-                                    // sb_amount=2;
-                                }
-
-                                for (uint32_t i = 1; i < scaleFacBandCount; i++)
-                                {
-                                    for (uint32_t j = 0; j < 8; j++)
-                                    {
-                                        // Butterfly selection of Samples
-                                        float a = floatSamples[i * 18 + j];
-                                        float b = floatSamples[i * 18 - (j + 1)];
-
-                                        antiAliasSamples[i * 18 + j] =
-                                            a * butterflyCoefficients[0][j] + b * butterflyCoefficients[1][j];
-                                        antiAliasSamples[i * 18 - (j + 1)] =
-                                            b * butterflyCoefficients[0][j] - a * butterflyCoefficients[1][j];
-                                    }
-                                }
-
-                                // IMDCT
-                                {
-                                    
-                                }
-
-                                // After decoding the Samples
-                                int a = 0;
+                                somethingSamples[i] = 0;
                             }
                         }
                     }
 
-                    break;
+                    uint32_t sampleIdx = 0;
+                    float floatSamples[576] = {};
+                    // Requantize The Samples
+                    {
+                        float scaleFacMultiplyer = scaleFacScale ? 1.0f : 0.5f;
+
+                        for (uint32_t scaleFactorBandIdx = 0; scaleFactorBandIdx < 21; scaleFactorBandIdx++)
+                        {
+                            uint32_t sampleCount = scaleFactorBands[scaleFactorBandIdx].width;
+                            float scaleFac = (float)scaleFacTable[scaleFactorBandIdx];
+
+                            float D = scaleFacMultiplyer * scaleFac; /*+ preflag * pretab */
+
+                            float C = 1.0f / 4.0f * ((float)globalGain - 210.0f); // 210 is per spec
+
+                            // Scale the Samples
+                            {
+                                for (uint32_t i = 0; i < sampleCount; i++)
+                                {
+                                    int sample = somethingSamples[sampleIdx];
+
+                                    if (sample < 0)
+                                    {
+                                        floatSamples[sampleIdx] =
+                                            -(float)(pow(-sample, 4.0 / 3.0) * pow(2, (double)C) * pow(2, (double)D));
+                                    }
+                                    else
+                                    {
+                                        floatSamples[sampleIdx] =
+                                            (float)(pow(sample, 4.0 / 3.0) * pow(2, (double)C) * pow(2, (double)D));
+                                    }
+
+                                    sampleIdx++;
+                                }
+                            }
+                        }
+                    }
+
+                    // Reorder the Samples
+                    {
+                        if (windowSwitching /*blockType == 2*/)
+                        {
+                            CAKEZ_ASSERT(0, "We need to reorder");
+                        }
+                    }
+
+                    // Maybe I need to work on the float Samples
+                    float antiAliasSamples[576] = {};
+                    memcpy(antiAliasSamples, floatSamples, 576 * sizeof(float));
+                    // Antialiase the Samples
+                    {
+                        float butterflyCoefficients[2][8] =
+                            {{0.85749293f, 0.88174200f, 0.94962865f, 0.98331459f, 0.99551782f, 0.99916056f, 0.99989920f, 0.99999316f},
+                             {-0.51449576f, -0.47173197f, -0.31337745f, -0.18191320f, -0.09457419f, -0.04096558f, -0.01419856f, -0.00369997f}};
+
+                        uint32_t scaleFacBandCount = 0;
+                        if (blockType != 0b10)
+                        {
+                            scaleFacBandCount = 32;
+                        }
+                        else
+                        {
+                            CAKEZ_ASSERT(0, "Check for mixed Blocks");
+                            // if(mixed_block_flag[gr][ch]==’0’)
+                            // sb_amount=0;
+                            // else
+                            // if((IDex==’0’)&&(sampling_frequency==’10’))
+                            // sb_amount=4;
+                            // else
+                            // sb_amount=2;
+                        }
+
+                        for (uint32_t i = 1; i < scaleFacBandCount; i++)
+                        {
+                            for (uint32_t j = 0; j < 8; j++)
+                            {
+                                // Butterfly selection of Samples
+                                float a = floatSamples[i * 18 + j];
+                                float b = floatSamples[i * 18 - (j + 1)];
+
+                                antiAliasSamples[i * 18 + j] =
+                                    a * butterflyCoefficients[0][j] + b * butterflyCoefficients[1][j];
+                                antiAliasSamples[i * 18 - (j + 1)] =
+                                    b * butterflyCoefficients[0][j] - a * butterflyCoefficients[1][j];
+                            }
+                        }
+                    }
+
+                    float samplesAfterIMDCT[576] = {};
+                    // IMDCT
+                    {
+                        uint32_t sampleIdx = 0;
+                        float overlappedSamples[18] = {};
+
+                        for (uint32_t subBandIdx = 0; subBandIdx < 32; subBandIdx++)
+                        {
+                            uint32_t n = 12;
+                            if (blockType == 2) // Short windows?
+                            {
+                            }
+                            else // Long Windows
+                            {
+                                n = 36;
+                                float xi = 0.0f;
+                                float timeSamples[36] = {};
+
+                                // Polyphase Filter Subband samples
+                                for (uint32_t i = 0; i < n; i++)
+                                {
+                                    // Evaluate xi
+                                    {
+                                        for (uint32_t k = 0; k < 18; k++)
+                                        {
+                                            // 18 * 32 = 576
+                                            float sample = floatSamples[subBandIdx * 18 + k];
+
+                                            xi += sample * cos(C_PI / 72 * (2 * i + 1 + 18) * (2 * k + 1));
+                                        }
+                                    }
+
+                                    timeSamples[i] = xi;
+                                }
+
+                                for (uint32_t i = 0; i < 18; i++)
+                                {
+                                    samplesAfterIMDCT[sampleIdx++] = floatSamples[i] + overlappedSamples[i];
+
+                                    // Store overlapped Samples
+                                    overlappedSamples[i] = floatSamples[i + 18];
+                                }
+                            }
+                        }
+                    }
+
+                    float frequencyInvertedSamples[576] = {};
+                    // Frequency Inversion
+                    {
+                        for (uint32_t sb = 0; sb < 32; sb += 2)
+                        {
+                            for (uint32_t i = 0; i < 18; i += 2)
+                            {
+                                frequencyInvertedSamples[sb * 18 + i] =
+                                    -samplesAfterIMDCT[sb * 18 + i];
+                            }
+                        }
+                    }
+
+                    float pcmSamples[576] = {};
+                    // Filter Bank, shifting some Barrels bro
+                    {
+                        // MDCT Section
+                        {
+                            float barrelShifter[1024] = {};
+
+                            for (uint32_t subBandSampleIdx = 0; subBandSampleIdx < 18; subBandSampleIdx++)
+                            {
+                                // Shift up for every subBandSampleIdx
+                                for (uint32_t i = 1023; i > 63; i--)
+                                {
+                                    // Doing some Barrel Shifting, bro
+                                    barrelShifter[i] = barrelShifter[i - 64];
+                                }
+
+                                // Calculate Yi | 0 <= 1 < 64, and store in barrelShifter
+                                for (uint32_t i = 0; i < 64; i++)
+                                {
+                                    float sum = 0.0f;
+
+                                    for (uint32_t sb = 0; sb < 32; sb++)
+                                    {
+                                        // N ik * S k
+                                        float Sk = frequencyInvertedSamples[sb * 18 + subBandSampleIdx];
+                                        float Nik = cos(C_PI / 64 * (16 + i) * (2 * sb + 1));
+
+                                        sum += Nik * Sk;
+                                    }
+
+                                    barrelShifter[i] = sum;
+                                }
+
+                                // Remove Redundancy of the MDCT Process 1024 -> 512, 50% Redundancy
+                                {
+                                    float uniqueValues[512] = {};
+
+                                    /**
+                                                 * Partition the Barrel Shifter into 16 Pieces,
+                                                 * each consiting of 64 Values
+                                                 */
+                                    for (uint32_t i = 0; i < 8; i++)
+                                    {
+                                        // 2 * 32 = 64 Values for every 128 Values
+                                        for (uint32_t j = 0; j < 32; j++)
+                                        {
+                                            uniqueValues[i * 64 + j] = barrelShifter[i * 128 + j];
+                                            uniqueValues[i * 64 + 32 + j] = barrelShifter[i * 128 + j + 96];
+                                        }
+                                    }
+
+                                    // Apply the Windowing to the Values
+                                    for (uint32_t i = 0; i < 512; i++)
+                                    {
+                                        uniqueValues[i] *= filterBankWindowingDTable[i];
+                                    }
+
+                                    float outputSamples[32] = {};
+                                    // Generate 32 Output Samples
+                                    {
+                                        for (uint32_t i = 0; i < 32; i++)
+                                        {
+                                            float sum = 0.0f;
+                                            for (uint32_t j = 0; j < 16; j++)
+                                            {
+                                                sum += uniqueValues[j * 32 + i];
+                                            }
+
+                                            pcmSamples[subBandSampleIdx * 32 + i] = sum;
+
+                                            // if (pcmSamples[subBandSampleIdx] < 0.0f)
+                                            // {
+                                            //     pcmSamples[subBandSampleIdx] *= INT16_MIN;
+                                            // }
+                                            // else
+                                            // {
+                                            //     pcmSamples[subBandSampleIdx] *= INT16_MAX;
+                                            // }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    frameCounter++;
+                    memcpy(pcmBuffer + frameCounter * 576, pcmSamples, 576 * sizeof(float));
+                    i += frame.sizeInBytes - 1;
                 }
             }
         }
+
+        CAKEZ_TRACE("Found %d, Frames", frameCounter);
     }
     return true;
 }
