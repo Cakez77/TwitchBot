@@ -5,6 +5,7 @@
 
 // #define internal static
 #define global_variable static
+#define internal static
 
 #define ArraySize(arr) sizeof((arr)) / sizeof((arr)[0])
 
