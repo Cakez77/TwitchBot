@@ -2,9 +2,13 @@
 
 #include "defines.h"
 #include "logger.h"
+#include "memory.h"
 
-uint32_t constexpr MAX_ALLOCATED_SOUNDS = 20;
-uint32_t constexpr MAX_PLAYING_SOUNDS = 5;
+enum SoundBufferType
+{
+	SOUND_BUFFER_TYPE_NORMAL,
+	SOUND_BUFFER_TYPE_CHIPMUNK,
+};
 
 struct Sound
 {
@@ -19,36 +23,10 @@ struct Sound
 	uint32_t sampleCount;
 };
 
-struct SoundState
-{
-	uint32_t allocatedSoundCount;
-	Sound allocatedSounds[MAX_ALLOCATED_SOUNDS];
-	
-	uint32_t playingSoundCount;
-	Sound playingSounds[MAX_PLAYING_SOUNDS];
-	uint32_t oldPlayCursor;
-	uint32_t oldWriteCursor;
-	
-	uint32_t bufferSize;
-	uint32_t allocatedByteCount;
-	char *soundBuffer;
-};
+void play_sound(Sound sound, bool loop = false, float volume = 1.0f);
+void play_sound(char* mp3File, uint32_t fileSize, 
+								bool loop = false, float volume = 1.0f);
 
-void play_sound(SoundState *soundState,
-								Sound sound,
-								bool loop = false,
-								float volume = 1.0f)
-{
-	if (sound.data)
-	{
-		if (soundState->playingSoundCount < MAX_PLAYING_SOUNDS)
-		{
-			soundState->playingSounds[soundState->playingSoundCount++] = sound;
-		}
-	}
-	else
-	{
-		// CAKEZ_ASSERT(0, "Reached maximum playing Sounds");
-		// CAKEZ_ERROR("Reached maximum playing Sounds");
-	}
-}
+// Util
+int sound_get_playing_sound_count();
+void platform_change_sound_buffer(SoundBufferType type);

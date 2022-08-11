@@ -1,6 +1,6 @@
 #pragma once
 
-#include "defines.h"
+#include "url_encode.h"
 
 #include <windows.h>
 #include <http.h>

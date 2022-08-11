@@ -57,11 +57,7 @@ void add_rude_person(RudePersonCollection *rudePersonCollection,  char *name, ui
 	platform_write_file(RUDE_PERSON_FILE_NAME, ( char *)rudePersonCollection, sizeof(RudePersonCollection), true);
 }
 
-void connect_to_localhost()
-{
-}
-
-void connect_to_chat(char *token, SoundState *soundState)
+void connect_to_chat(char *token)
 {
 	WSAData windowsSocketData;
 	WSAStartup(MAKEWORD(1, 2), &windowsSocketData);
@@ -86,7 +82,7 @@ void connect_to_chat(char *token, SoundState *soundState)
 					int length = sprintf(authStr, "PASS oauth:%s\r\n", token);
 					send_message(authStr, length);
 					// send_recieve_and_print_msg(authStr);
-					send_recieve_and_print_msg("NICK Lanzelorder\r\n");
+					send_recieve_and_print_msg("NICK CakezBot\r\n");
 					// send_recieve_and_print_msg(twitchSocket, "NICK lanzelorder\r\n");
 				}
 				

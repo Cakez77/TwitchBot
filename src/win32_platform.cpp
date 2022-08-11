@@ -1,40 +1,46 @@
+
 #include "defines.h"
 #include "logger.h"
-
 #include "util.cpp"
 #include "json_parser.cpp"
+#include "memory.cpp"
 
 #include "platform.h"
-
-#include "sound.h"
-
-#include "memory.cpp"
-#include "app_data.h"
-
-#define MINIMP3_IMPLEMENTATION
-#include "mp3_lib.h"
 
 #include "twitch_events.cpp"
 
 #include "connect_to_twitch_chat.h"
-#include "url_encode.h"
 
 #include "get_code.h"
 
+#include "sound.h"
 
+// Windows
 #include <windows.h>
 #include <winhttp.h>
 #include <dsound.h>
 
 #include <thread>
 #include <time.h>
-#include <vector>
 
+
+//#######################################################################
+//                      Internal Structures
+//#######################################################################
+
+// File I/O
+constexpr uint32_t FILE_IO_MEMORY_SIZE = MB(1);
+
+// HTTP 
+constexpr uint32_t HTTP_RESPONSE_BUFFER_SIZE = KB(2);
 constexpr uint32_t MAX_SERVER_CONNECTIONS = 10;
 constexpr uint32_t MAX_REQUESTS = 50;
-constexpr uint32_t FILE_IO_MEMORY_SIZE = MB(1);
-constexpr uint32_t HTTP_RESPONSE_BUFFER_SIZE = KB(2);
 constexpr uint32_t MAX_POLL_URL_COUNT = 5;
+
+// Sound
+constexpr uint32_t SOUND_BUFFER_SIZE = MB(10);
+constexpr uint32_t MAX_ALLOCATED_SOUNDS = 20;
+constexpr uint32_t MAX_PLAYING_SOUNDS = 5;
 
 struct WIN32HTTPState
 {
@@ -53,31 +59,51 @@ struct WIN32HTTPState
 	Request requests[MAX_REQUESTS];
 };
 
+struct SoundState
+{
+	uint32_t allocatedSoundCount;
+	Sound allocatedSounds[MAX_ALLOCATED_SOUNDS];
+	
+	uint32_t playingSoundCount;
+	Sound playingSounds[MAX_PLAYING_SOUNDS];
+	uint32_t oldPlayCursor;
+	uint32_t oldWriteCursor;
+	
+	// Currently 
+	uint32_t soundBufferSize;
+	uint32_t allocatedByteCount;
+	char* soundBuffer;
+	
+  uint32_t mixBufferSize;
+	char* mixBuffer;
+};
+
 //#######################################################################
 //                      Internal Data
 //#######################################################################
 global_variable WIN32HTTPState win32HTTPState;
 global_variable uint8_t *fileIOMemory;
-global_variable SoundState *globalSoundState;
 
+// Sound
+global_variable SoundState* soundState;
 global_variable HTTPConnection localApi;
 
 LRESULT CALLBACK window_callback(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg)
 	{
-    case WM_SYSKEYDOWN:
-    case WM_KEYDOWN:
-    case WM_HOTKEY:
-    {
+		case WM_SYSKEYDOWN:
+		case WM_KEYDOWN:
+		case WM_HOTKEY:
+		{
 			if (wParam == VK_F2)
 			{
-				if (globalSoundState && globalSoundState->playingSoundCount)
+				if (soundState->playingSoundCount)
 				{
-					globalSoundState->playingSoundCount = 0;
+					soundState->playingSoundCount = 0;
 				}
 			}
-    }
+		}
 	}
 	
 	return DefWindowProcA(hwnd, msg, wParam, lParam);
@@ -180,11 +206,37 @@ void platform_update_window()
 }
 
 global_variable IDirectSound8 *directSound;
+global_variable IDirectSoundBuffer *soundBufferNormal;
+global_variable IDirectSoundBuffer *soundBufferChipmunk;
 global_variable IDirectSoundBuffer *soundBuffer;
-global_variable IDirectSoundBuffer *chipmunkSoundBuffer;
 
-bool platform_init_sound()
+bool platform_init_sound(AppMemory* appMemory)
 {
+	// Global Sound State initialization
+	{
+		soundState = (SoundState*)allocate_memory(appMemory, sizeof(SoundState));
+		
+		if(!soundState)
+		{
+			CAKEZ_FATAL("Failed allocating SoundState");
+			return false;
+		}
+		
+		
+		soundState->mixBuffer = (char *)allocate_memory(appMemory, KB(200));
+		
+		// Buffer to hold playing sounds
+		// TODO: Use memory arenas to have dynamic memory allocation???j
+		soundState->soundBufferSize = SOUND_BUFFER_SIZE;
+		soundState->soundBuffer = (char*)allocate_memory(appMemory, soundState->soundBufferSize);
+		
+		if(!soundState->soundBuffer)
+		{
+			CAKEZ_FATAL("Failed allocating SoundBuffer");
+			return false;
+		}
+	}
+	
 	IDirectSoundBuffer *primaryBuffer = 0;
 	
 	if (DirectSoundCreate8(0, &directSound, 0) != DS_OK)
@@ -261,7 +313,7 @@ bool platform_init_sound()
 		bufferDesc.guid3DAlgorithm = GUID_NULL;
 		
 		// Create a secondar Sound Buffer that can be copied to
-		if (directSound->CreateSoundBuffer(&bufferDesc, &soundBuffer, 0) != DS_OK)
+		if (directSound->CreateSoundBuffer(&bufferDesc, &soundBufferNormal, 0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to create Secondary Sound Buffer");
 			return false;
@@ -273,7 +325,7 @@ bool platform_init_sound()
 		// Set the wave format of secondary buffer that this wave file will be loaded onto.
 		WAVEFORMATEX waveFormat = {};
 		waveFormat.wFormatTag = WAVE_FORMAT_PCM;
-		waveFormat.nSamplesPerSec = 44100;
+		waveFormat.nSamplesPerSec = 35000;
 		waveFormat.wBitsPerSample = 16;
 		waveFormat.nChannels = 1;
 		waveFormat.nBlockAlign = (waveFormat.wBitsPerSample / 8) * waveFormat.nChannels;
@@ -295,7 +347,7 @@ bool platform_init_sound()
 		bufferDesc.guid3DAlgorithm = GUID_NULL;
 		
 		// Create a secondar Sound Buffer that can be copied to
-		if (directSound->CreateSoundBuffer(&bufferDesc, &chipmunkSoundBuffer, 0) != DS_OK)
+		if (directSound->CreateSoundBuffer(&bufferDesc, &soundBufferChipmunk, 0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to create Secondary Sound Buffer");
 			return false;
@@ -305,21 +357,21 @@ bool platform_init_sound()
 	// Play the Sound Buffer
 	{
 		// Set position at the beginning of the sound buffer.
-		if (soundBuffer->SetCurrentPosition(0) != DS_OK)
+		if (soundBufferNormal->SetCurrentPosition(0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to set Cursor Postion of Secondary Buffer");
 			return false;
 		}
 		
 		// Set volume of the Buffer, -10000 -> 0 -> 10000?
-		if (soundBuffer->SetVolume(0) != DS_OK)
+		if (soundBufferNormal->SetVolume(0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to set Volume of Secondary Buffer");
 			return false;
 		}
 		
 		// Play the contents of the secondary sound buffer.
-		if (soundBuffer->Play(0, 0, DSBPLAY_LOOPING) != DS_OK)
+		if (soundBufferNormal->Play(0, 0, DSBPLAY_LOOPING) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to play Secondary Buffer");
 			return false;
@@ -329,34 +381,52 @@ bool platform_init_sound()
 	// Play the Chipmunk Sound Buffer
 	{
 		// Set position at the beginning of the sound buffer.
-		if (chipmunkSoundBuffer->SetCurrentPosition(0) != DS_OK)
+		if (soundBufferChipmunk->SetCurrentPosition(0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to set Cursor Postion of Secondary Buffer");
 			return false;
 		}
 		
 		// Set volume of the Buffer, -10000 -> 0 -> 10000?
-		if (chipmunkSoundBuffer->SetVolume(0) != DS_OK)
+		if (soundBufferChipmunk->SetVolume(0) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to set Volume of Secondary Buffer");
 			return false;
 		}
 		
 		// Play the contents of the secondary sound buffer.
-		if (chipmunkSoundBuffer->Play(0, 0, DSBPLAY_LOOPING) != DS_OK)
+		if (soundBufferChipmunk->Play(0, 0, DSBPLAY_LOOPING) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to play Secondary Buffer");
 			return false;
 		}
 	}
 	
+	DSBCAPS bufferCaps = {};
+  bufferCaps.dwSize = sizeof(DSBCAPS);
+  soundBufferNormal->GetCaps(&bufferCaps);
+	
+	soundState->mixBufferSize = 0;
+  soundState->mixBufferSize = bufferCaps.dwBufferBytes;
+	
+	if(!soundState->mixBufferSize)
+	{
+		CAKEZ_FATAL("Could not get size of Sound Buffer!");
+		return false;
+	}
+	
+	// Use normal sound Buffer
+	soundBuffer = soundBufferNormal;
+	
 	return true;
 }
 
-void platform_update_sound(SoundState *soundState, char *mixBuffer)
+void platform_update_sound()
 {
 	uint32_t playCursor;
 	uint32_t writeCursor;
+	char* mixBuffer = soundState->mixBuffer;
+	
 	soundBuffer->GetCurrentPosition((LPDWORD)&playCursor, (LPDWORD)&writeCursor);
 	if (playCursor == writeCursor)
 	{
@@ -546,7 +616,7 @@ void platform_listen_poll_urls()
 {
 	while(true)
 	{
-		// HUH??
+		// HUH?
 		HTTP_REQUEST_ID requestID;
 		HTTP_SET_NULL_ID(&requestID);
 		
@@ -568,12 +638,32 @@ void platform_listen_poll_urls()
 					{
 						char *responseURL = (char *)pRequest->pRawUrl;
 						
-						CAKEZ_ASSERT(0, "Checking response");
-						
 						HTTP_DATA_CHUNK responeBody = {};
 						responeBody.DataChunkType = HttpDataChunkFromMemory;
 						responeBody.FromMemory.BufferLength = 21;
 						responeBody.FromMemory.pBuffer = "Everything went okay!";
+						
+						if(str_cmp("/testRequest", responseURL))
+						{
+							if(platform_file_exists("local_server/videoName.txt"))
+							{
+								while(!platform_delete_file("local_server/videoName.txt"))
+								{
+									platform_sleep(1000);
+								}
+							}
+							
+							if(twitchState->requestVideoIdx)
+							{
+								char* videoName = twitchState->requestVideos[--twitchState->requestVideoIdx];
+								
+								
+								platform_write_file("local_server/videoName.txt",
+																		videoName, strlen(videoName), false);
+								
+								platform_sleep(5000);
+							}
+						}
 						
 						HTTP_RESPONSE response = {};
 						response.pReason = "OK";
@@ -609,8 +699,17 @@ int main()
 	memory.memory = (uint8_t *)malloc(MB(50));
 	memory.size = MB(50);
 	
-	platform_create_window(100, 100, "Test");
-	platform_init_sound();
+	if(!platform_create_window(100, 100, "Test"))
+	{
+		CAKEZ_FATAL("Failed to Create Window!");
+		return -1;
+	}
+	
+	if(!platform_init_sound(&memory))
+	{
+		CAKEZ_FATAL("Failed to initialize Sound!");
+		return -1;
+	}
 	
 	// Iinitialize HTTP
 	{
@@ -625,131 +724,17 @@ int main()
 			CAKEZ_FATAL("Failed to create HTTP Handle");
 			return -1;
 		}
-	}
-	
-	// Memory for File IO, last Allocation, ALWAYS!
-	fileIOMemory = allocate_memory(&memory, FILE_IO_MEMORY_SIZE);
-	
-	uint32_t inputBufferSize = MB(1);
-	uint8_t *inputBuffer = allocate_memory(&memory, inputBufferSize);
-	
-	globalSoundState = (SoundState *)allocate_memory(&memory, sizeof(SoundState));
-	
-	short *soundBuffer = (short *)allocate_memory(&memory, MB(25));
-	
-	// Create Windows handle to open HTTP Connections
-	if (!(win32HTTPState.globalInstance = WinHttpOpen(L"PleaseJustLetMeCreateThisOkay", 
-																										WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, 0, 0, 0)))
-	{
-		CAKEZ_ASSERT(0, "Failed to open HTTP connection");
 		
-		CAKEZ_FATAL("Failed to open HTTP connection");
-		return -1;
-	}
-	
-	char buffer[16000] = {};
-	char *mixBuffer = (char *)allocate_memory(&memory, MB(1));
-	// std::thread soundThread(update_loop, &soundState, mixBuffer);
-	
-	HTTPConnection twitchID = platform_connect_to_server("id.twitch.tv");
-	HTTPConnection twitchApi = platform_connect_to_server("api.twitch.tv");
-	HTTPConnection streamelementsApi = platform_connect_to_server("api.streamelements.com");
-	localApi = platform_connect_to_server("localhost", false);
-	
-	
-	char *mp3Buffer = (char *)allocate_memory(&memory, MP3_BUFFER_SIZE);
-	uint32_t mp3DataSize = 0;
-	
-	// Get Code, used in OAuth2
-	{
-		// char *code = get_code();
-		// // Null terminate;
-		// code[30] = 0;
-		
-		// char oAuthReq[1000] = {};
-		// sprintf(oAuthReq, GET_REFRESH_TOKEN, code);
-		//  Request getRefreshToken = platform_send_http_request(twitchID, oAuthReq, 0);
-		// if (!platform_recieve_http_response(getRefreshToken))
-		// {
-		//     CAKEZ_ASSERT(0, "Failed to recieve HTTP Response: %s", getRefreshToken.url);
-		//     return -1;
-		// }
-		// if (!platform_recieve_http_data(getRefreshToken, buffer, 1024))
-		// {
-		//     CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", getRefreshToken.url);
-		//     return -1;
-		// }
-		// return 0;
-	}
-	
-	memset(buffer, 0, 4096);
-	sprintf(buffer, URL_REFRESH_TWITCH_OAUTH_TOKEN, REFRESH_TOKEN, CLIENT_ID, CLIENT_SECRET);
-	Request refreshToken = platform_send_http_request(twitchID, buffer, 0);
-	if (!platform_recieve_http_response(refreshToken))
-	{
-		CAKEZ_ASSERT(0, "Failed to recieve HTTP Response: %s", refreshToken.url);
-		return -1;
-	}
-	if (!platform_receive_http_data(refreshToken, buffer, 1024))
-	{
-		CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", refreshToken.url);
-		return -1;
-	}
-	
-	char token[31];
-	char *data = buffer;
-	while (char c = *(data++))
-	{
-		if (c == ':')
+		// Create Windows handle to open HTTP Connections
+		if (!(win32HTTPState.globalInstance = WinHttpOpen(L"PleaseJustLetMeCreateThisOkay", 
+																											WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, 0, 0, 0)))
 		{
-			memcpy(token, data + 1, 30);
-			break;
-		}
-	}
-	
-	token[30] = 0;
-	
-#if 0
-	// Get Broadcaster ID
-	{
-		memset(buffer, 0, 1024);
-		sprintf(buffer, "Authorization: Bearer %s\r\nClient-Id: %s", token, CLIENT_ID);
-		
-		Request getBroadcasterID = platform_send_http_request(twitchApi, "helix/users?login=cakez77", buffer, "GET");
-		if (!platform_recieve_http_response(getBroadcasterID))
-		{
-			CAKEZ_ASSERT(0, "Failed to recieve HTTP Response: %s", getBroadcasterID.url);
+			CAKEZ_FATAL("Failed to open HTTP connection");
 			return -1;
 		}
-		memset(buffer, 0, 1024);
-		if (!platform_recieve_http_data(getBroadcasterID, buffer, 1024))
-		{
-			CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", getBroadcasterID.url);
-			return -1;
-		}
-	}
-#endif
-	
-	// Create Channel Point Redemption
-	{
-		// memset(buffer, 0, 1024);
-		// sprintf(buffer, "Authorization: Bearer %s\r\nClient-Id: %s\r\nContent-Type: application/json", token, CLIENT_ID);
 		
-		//  Request createChannelPointRewards = platform_send_http_request(twitchApi,
-		//                                                                   "helix/channel_points/custom_rewards?broadcaster_id=80953740",
-		//                                                                   buffer, "POST",
-		//                                                                   "{\"title\": \"Text To Speech Improved\", \"cost\": 5000}");
-		// if (!platform_recieve_http_response(createChannelPointRewards ))
-		// {
-		//     CAKEZ_ASSERT(0, "Failed to recieve HTTP Response: %s", createChannelPointRewards.url);
-		//     return -1;
-		// }
-		// memset(buffer, 0, 1024);
-		// if (!platform_recieve_http_data(createChannelPointRewards, buffer, 1024))
-		// {
-		//     CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", createChannelPointRewards.url);
-		//     return -1;
-		// }
+		// TODO: Mabye useful in the future
+		//localApi = platform_connect_to_server("localhost", false);
 	}
 	
 	if(!init_twitch_connection(&memory))
@@ -758,28 +743,119 @@ int main()
 		return -1;
 	}
 	
-	char *redemptionBuffer = (char *)allocate_memory(&memory, REDEMPTION_BUFFER_SIZE);
-	std::thread checkRedemptions(manage_twitch_events, globalSoundState, redemptionBuffer, buffer, twitchApi, token, streamelementsApi,
-															 mp3Buffer, soundBuffer);
+	// Memory for File IO, last Allocation, ALWAYS!
+	fileIOMemory = allocate_memory(&memory, FILE_IO_MEMORY_SIZE);
 	
-	// open_socket(token);
-	
-	std::thread read_chat(connect_to_chat, token, globalSoundState);
-	std::thread connect_to_local_host(connect_to_localhost);
-	
-	// Listhen on HTTP
-	std::thread listenPollUrls(platform_listen_poll_urls);
-	
-	while (true)
+	// Threads of the Program
 	{
-		platform_update_window();
-		platform_update_sound(globalSoundState, mixBuffer);
-		Sleep(10);
+		std::thread manageTwitchEvents(manage_twitch_events);
+		
+		char* token = get_o_auth_token();
+		std::thread read_chat(connect_to_chat, token);
+		
+		// Listhen on HTTP
+		std::thread listenPollUrls(platform_listen_poll_urls);
+		
+		while (true)
+		{
+			platform_update_window();
+			platform_update_sound();
+			Sleep(10);
+		}
 	}
 	
 	return 0;
 }
 
+//#######################################################################
+//                      Implementations from sound.h
+//#######################################################################
+void play_sound(Sound sound, bool loop, float volume)
+{
+	if (sound.data)
+	{
+		if (soundState->playingSoundCount < MAX_PLAYING_SOUNDS)
+		{
+			soundState->playingSounds[soundState->playingSoundCount++] = sound;
+		}
+		else
+		{
+			CAKEZ_ASSERT(0, "Reached maximum playing Sounds");
+		}
+	}
+}
+
+#define MINIMP3_IMPLEMENTATION
+#include "mp3_lib.h"
+
+void play_sound(char* mp3File, uint32_t fileSize, bool loop, float volume)
+{
+	if (soundState->playingSoundCount < MAX_PLAYING_SOUNDS)
+	{
+		// TODO: Only allows playing one singular sound
+		memset(soundState->soundBuffer, 0, soundState->soundBufferSize);
+		
+		Sound s = {};
+		s.data = soundState->soundBuffer;
+		s.samples = (int16_t*)soundState->soundBuffer;
+		s.volume = 0.7f;
+		
+		// MP3 Lib Stuff
+		{
+			mp3dec_t mp3d;
+			mp3dec_init(&mp3d);
+			short *samples = s.samples;
+			
+			while (fileSize != 0)
+			{
+				mp3dec_frame_info_t info;
+				
+				int sampleCount = mp3dec_decode_frame(&mp3d, ( uint8_t *)mp3File,
+																							fileSize, samples, &info);
+				printf("samples = %d\n", sampleCount);
+				
+				fileSize -= info.frame_bytes;
+				mp3File += info.frame_bytes;
+				samples += sampleCount;
+				s.sampleCount += sampleCount;
+			}
+		}
+		
+		soundState->playingSounds[soundState->playingSoundCount++] = s;
+	}
+	else
+	{
+		CAKEZ_ASSERT(0, "Reached maximum playing Sounds");
+	}
+	
+}
+
+int sound_get_playing_sound_count()
+{
+	return soundState->playingSoundCount;
+}
+
+void platform_change_sound_buffer(SoundBufferType type)
+{
+	switch(type)
+	{
+		case SOUND_BUFFER_TYPE_NORMAL:
+		{
+			soundBuffer = soundBufferNormal;
+			break;
+		}
+		case SOUND_BUFFER_TYPE_CHIPMUNK:
+		{
+			soundBuffer = soundBufferChipmunk;
+			break;
+		}
+	}
+	
+}
+
+//#######################################################################
+//                      Implementations from platform.h
+//#######################################################################
 void platform_log( char *msg, TextColor color)
 {
 	HANDLE consoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -788,23 +864,23 @@ void platform_log( char *msg, TextColor color)
 	
 	switch (color)
 	{
-    case TEXT_COLOR_WHITE:
+		case TEXT_COLOR_WHITE:
 		colorBits = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_RED;
 		break;
 		
-    case TEXT_COLOR_GREEN:
+		case TEXT_COLOR_GREEN:
 		colorBits = FOREGROUND_GREEN;
 		break;
 		
-    case TEXT_COLOR_YELLOW:
+		case TEXT_COLOR_YELLOW:
 		colorBits = FOREGROUND_GREEN | FOREGROUND_RED;
 		break;
 		
-    case TEXT_COLOR_RED:
+		case TEXT_COLOR_RED:
 		colorBits = FOREGROUND_RED;
 		break;
 		
-    case TEXT_COLOR_LIGHT_RED:
+		case TEXT_COLOR_LIGHT_RED:
 		colorBits = FOREGROUND_RED | FOREGROUND_INTENSITY;
 		break;
 	}
@@ -1008,7 +1084,7 @@ Request platform_send_http_request(HTTPConnection connection, char *url,
 	}
 }
 
-bool platform_recieve_http_response( Request request)
+bool platform_recieve_http_response(Request request)
 {
 	if (!(request.httpHandle))
 	{
@@ -1022,8 +1098,14 @@ bool platform_recieve_http_response( Request request)
 	return WinHttpReceiveResponse(winRequest, 0);
 }
 
-bool platform_receive_http_data( Request request, char *outBuffer, uint32_t bufferSize, uint32_t *outRecievedBytes)
+bool platform_receive_http_data(Request request, char *outBuffer, 
+																uint32_t bufferSize, uint32_t *outReceivedBytes)
 {
+	if(outReceivedBytes)
+	{
+		*outReceivedBytes = 0;
+	}
+	
 	if (!(request.httpHandle))
 	{
 		CAKEZ_ASSERT(0, "Invalid Request: URL: %s, Method: %s, Header: %s",
@@ -1050,9 +1132,9 @@ bool platform_receive_http_data( Request request, char *outBuffer, uint32_t buff
 		
 		outBuffer += bytesRead;
 		
-		if (outRecievedBytes)
+		if (outReceivedBytes)
 		{
-			*outRecievedBytes += bytesRead;
+			*outReceivedBytes += bytesRead;
 		}
 	}
 	
@@ -1130,16 +1212,19 @@ bool platform_add_http_poll_url(char* url)
 	}
 }
 
+bool platform_file_exists(char *path)
+{
+  DWORD attributes = GetFileAttributes(path);
+  
+  return (attributes != INVALID_FILE_ATTRIBUTES &&
+          !(attributes & FILE_ATTRIBUTE_DIRECTORY));
+}
+
 char *platform_read_file(char *path, uint32_t *length)
 {
 	char *buffer = 0;
-	HANDLE file = CreateFile(
-													 path,
-													 GENERIC_READ,
-													 FILE_SHARE_READ,
-													 0,
-													 OPEN_EXISTING,
-													 0, 0);
+	HANDLE file = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
+													 0, OPEN_EXISTING, 0, 0);
 	
 	if (file != INVALID_HANDLE_VALUE)
 	{
@@ -1184,6 +1269,11 @@ char *platform_read_file(char *path, uint32_t *length)
 	return buffer;
 }
 
+bool platform_delete_file(char *path)
+{
+  return DeleteFileA(path) != 0;
+}
+
 unsigned long platform_write_file(char *path,
 																	char *buffer,
 																	uint32_t size,
@@ -1191,13 +1281,9 @@ unsigned long platform_write_file(char *path,
 {
 	DWORD bytesWritten = 0;
 	
-	HANDLE file = CreateFile(
-													 path,
+	HANDLE file = CreateFile(path,
 													 overwrite ? GENERIC_WRITE : FILE_APPEND_DATA,
-													 FILE_SHARE_WRITE,
-													 0,
-													 OPEN_ALWAYS,
-													 0, 0);
+													 FILE_SHARE_WRITE, 0, OPEN_ALWAYS, 0, 0);
 	
 	if (file != INVALID_HANDLE_VALUE)
 	{

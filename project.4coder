@@ -12,7 +12,8 @@ patterns = {
 "*.4coder",
 "*.txt",
 "*.frag",
-"*.vert"
+"*.vert",
+"*.html",
 };
 blacklist_patterns = {
 ".*",
@@ -143,6 +144,13 @@ commands = {
 },
 .generate_custom_api_master_list = {
 .win = "..\build\api_parser 4ed_api_implementation.cpp",
+.out = "*run*",
+.footer_panel = false,
+.save_dirty_files = false,
+.cursor_at_end = false,
+},
+.run_program = {
+.win = "devenv main.exe",
 .out = "*run*",
 .footer_panel = false,
 .save_dirty_files = false,
