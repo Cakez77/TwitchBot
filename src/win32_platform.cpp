@@ -637,32 +637,28 @@ void platform_listen_poll_urls()
 					{
 						char *responseURL = (char *)pRequest->pRawUrl;
 						
-						HTTP_DATA_CHUNK responeBody = {};
-						responeBody.DataChunkType = HttpDataChunkFromMemory;
-						responeBody.FromMemory.BufferLength = 21;
-						responeBody.FromMemory.pBuffer = "Everything went okay!";
+						char* responseText = "Everything went okay!";
 						
 						if(str_cmp("/testRequest", responseURL))
 						{
-							if(platform_file_exists("local_server/videoName.txt"))
-							{
-								while(!platform_delete_file("local_server/videoName.txt"))
-								{
-									platform_sleep(1000);
-								}
-							}
-							
+							responseText = "";
 							if(twitchState->requestVideoIdx)
 							{
-								char* videoName = twitchState->requestVideos[--twitchState->requestVideoIdx];
-								
-								
-								platform_write_file("local_server/videoName.txt",
-																		videoName, strlen(videoName), false);
-								
-								platform_sleep(10000);
+								responseText = twitchState->requestVideos[--twitchState->requestVideoIdx];
 							}
 						}
+						
+						HTTP_DATA_CHUNK responeBody = {};
+						responeBody.DataChunkType = HttpDataChunkFromMemory;
+						responeBody.FromMemory.pBuffer = responseText;
+						responeBody.FromMemory.BufferLength = strlen(responseText);
+						
+						HTTP_UNKNOWN_HEADER allowCrossOriginHeader = {};
+						
+						allowCrossOriginHeader.pName = "Access-Control-Allow-Origin";
+						allowCrossOriginHeader.NameLength = 27;
+						allowCrossOriginHeader.pRawValue = "*";
+						allowCrossOriginHeader.RawValueLength = 1;
 						
 						HTTP_RESPONSE response = {};
 						response.pReason = "OK";
@@ -670,6 +666,10 @@ void platform_listen_poll_urls()
 						response.StatusCode = 200;
 						response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = "text/plain";
 						response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = 10;
+						response.Headers.KnownHeaders[HttpHeaderAllow].pRawValue = "Access-Control-Allow-Origin:*";
+						response.Headers.KnownHeaders[HttpHeaderAllow].RawValueLength = 29;
+						response.Headers.UnknownHeaderCount = 1;
+						response.Headers.pUnknownHeaders = &allowCrossOriginHeader;
 						response.EntityChunkCount = 1;
 						response.pEntityChunks = &responeBody;
 						ULONG bytesSend;
