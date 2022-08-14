@@ -78,7 +78,8 @@ char* videos[]
 	"Comparing_Shaders.mp4",
 	"I_Drank_A_Potion.mp4",
 	"Programming_In_Vain.mp4",
-	"Relax.mp4"
+	"Relax.mp4",
+	"POE Invincibility Technique.mp4"
 };
 
 //#######################################################################
@@ -109,6 +110,8 @@ internal bool refresh_o_auth_token()
 		CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", refreshToken.url);
 		return 0;
 	}
+	
+	platform_close_http_request(refreshToken);
 	
 	char *data = resultBuffer;
 	while (char c = *(data++))
@@ -147,6 +150,8 @@ internal void create_channel_point_redemption()
 	{
 		CAKEZ_ASSERT(0, "Failed to recieve HTTP Data: %s", createChannelPointRewards.url);
 	}
+	
+	platform_close_http_request(createChannelPointRewards);
 	
 	CAKEZ_TRACE(resultBuffer);
 }
@@ -379,6 +384,9 @@ void manage_twitch_events()
 	sprintf(header, "Authorization: Bearer %s\r\nClient-Id: %s", 
 					twitchState->oAuthToken, CLIENT_ID);
 	
+	// Initialize random Seed
+	auto seed = platform_get_performance_tick_count();
+	
 	while (true)		
 	{
 		uint32_t redemptionTextLength = 0;
@@ -417,11 +425,41 @@ void manage_twitch_events()
 				platform_close_http_request(getChannelPointRewards);
 				
 				CAKEZ_TRACE(redemptionBuffer);
-				// TODO: Refresh Token when no longer valid!
 				
 				if(redemptionTextLength < 100)
-				{
-					continue;
+				{		
+					bool tokenInvalid = false;
+					std::vector<Token> tokens;
+					if (parse_json(redemptionBuffer, redemptionTextLength, tokens))
+					{
+						for (uint32_t tokenIdx = 0; tokenIdx < tokens.size(); tokenIdx++)
+						{
+							Token t = tokens[tokenIdx];
+							
+							if (t.type == TOKEN_TYPE_STRING)
+							{
+								char *name = &redemptionBuffer[t.start];
+								
+								if (contains_prefix("error", name))
+								{
+									tokenInvalid = true;
+								}
+							}
+						}
+					}
+					
+					
+					if(tokenInvalid)
+					{
+						CAKEZ_TRACE("Refreshing OAuth Token...");
+						refresh_o_auth_token();
+						
+						memset(header, 0, 1024);
+						sprintf(header, "Authorization: Bearer %s\r\nClient-Id: %s", 
+										twitchState->oAuthToken, CLIENT_ID);
+					}
+					
+					continue; 
 				}
 				
 				switch(redemption.type)
@@ -440,9 +478,9 @@ void manage_twitch_events()
 					{
 						if(twitchState->requestVideoIdx + 1 < MAX_REQUEST_VIDEOS)
 						{
+							twitchState->videoIdx = rand() % ArraySize(videos);
 							twitchState->requestVideos[twitchState->requestVideoIdx++] = 
-								videos[twitchState->videoIdx++];
-							twitchState->videoIdx %= ArraySize(videos);
+								videos[twitchState->videoIdx];
 							
 							char requestID[TWITCH_ID_LENGTH] = {};
 							

@@ -83,6 +83,7 @@ void connect_to_chat(char *token)
 					send_message(authStr, length);
 					// send_recieve_and_print_msg(authStr);
 					send_recieve_and_print_msg("NICK CakezBot\r\n");
+					//send_recieve_and_print_msg("CAP REQ :twitch.tv/commands twitch.tv/tags\r\n");
 					// send_recieve_and_print_msg(twitchSocket, "NICK lanzelorder\r\n");
 				}
 				

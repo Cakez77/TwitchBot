@@ -53,3 +53,4 @@ unsigned long platform_write_file(char *path,
 																	bool overwrite);
 
 void platform_sleep(int ms);
+uint64_t platform_get_performance_tick_count();

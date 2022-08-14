@@ -55,7 +55,7 @@ struct WIN32HTTPState
 	uint32_t connectionCount;
 	HINTERNET connections[MAX_SERVER_CONNECTIONS];
 	
-	uint32_t requestCount;
+	int32_t requestCount;
 	Request requests[MAX_REQUESTS];
 };
 
@@ -164,8 +164,7 @@ bool platform_create_window(int width, int height, char *title)
 	window_width += border_rect.right - border_rect.left;
 	window_height += border_rect.bottom - border_rect.top;
 	
-	window = CreateWindowExA(
-													 (DWORD)window_ex_style, "cakez_window_class", title,
+	window = CreateWindowExA((DWORD)window_ex_style, "cakez_window_class", title,
 													 (DWORD)window_style, window_x, window_y, window_width, window_height,
 													 0, 0, instance, 0);
 	
@@ -661,7 +660,7 @@ void platform_listen_poll_urls()
 								platform_write_file("local_server/videoName.txt",
 																		videoName, strlen(videoName), false);
 								
-								platform_sleep(5000);
+								platform_sleep(10000);
 							}
 						}
 						
@@ -1157,7 +1156,7 @@ void platform_close_http_request(Request request)
 	if (foundRequestIdx != INVALID_IDX)
 	{
 		win32HTTPState.requestCount--;
-		for (uint32_t requestIdx = foundRequestIdx;
+		for (int32_t requestIdx = foundRequestIdx;
 				 requestIdx < win32HTTPState.requestCount - 1; requestIdx++)
 		{
 			win32HTTPState.requests[requestIdx] = win32HTTPState.requests[requestIdx + 1];
@@ -1322,4 +1321,11 @@ unsigned long platform_write_file(char *path,
 void platform_sleep(int ms)
 {
 	Sleep(ms);
+}
+
+uint64_t platform_get_performance_tick_count()
+{
+  LARGE_INTEGER count = {};
+  QueryPerformanceCounter(&count);
+  return count.QuadPart;
 }
