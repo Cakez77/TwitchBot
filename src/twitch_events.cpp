@@ -330,11 +330,16 @@ internal void handle_tts_request(char* redemptionBuffer, uint32_t redemptionText
 		CAKEZ_ASSERT(mp3DataSize < MP3_BUFFER_SIZE,
 								 "MP3 File too large for mp3ResponseBuffer!");
 		
+		// THIS IF FOR DEBUG REASONS, SO I KNOW THE FILE IS CORRECT, @iammrrob0t
+		platform_write_file("mp3_response.mp3", twitchState->mp3ResponseBuffer,
+												mp3DataSize, true);
+		
 		if(chipmunk)
 		{
 			platform_change_sound_buffer(SOUND_BUFFER_TYPE_CHIPMUNK);
 		}
 		play_sound(twitchState->mp3ResponseBuffer, mp3DataSize, false, 0.7f);
+		
 		
 		// Wait while the sound is playing
 		while (sound_get_playing_sound_count())

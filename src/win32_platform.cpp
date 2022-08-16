@@ -29,7 +29,7 @@
 //#######################################################################
 
 // File I/O
-constexpr uint32_t FILE_IO_MEMORY_SIZE = MB(1);
+constexpr uint32_t FILE_IO_MEMORY_SIZE = MB(5);
 
 // HTTP 
 constexpr uint32_t HTTP_RESPONSE_BUFFER_SIZE = KB(2);
@@ -38,7 +38,7 @@ constexpr uint32_t MAX_REQUESTS = 50;
 constexpr uint32_t MAX_POLL_URL_COUNT = 5;
 
 // Sound
-constexpr uint32_t SOUND_BUFFER_SIZE = MB(10);
+constexpr uint32_t SOUND_BUFFER_SIZE = MB(25);
 constexpr uint32_t MAX_ALLOCATED_SOUNDS = 20;
 constexpr uint32_t MAX_PLAYING_SOUNDS = 5;
 
@@ -641,7 +641,7 @@ void platform_listen_poll_urls()
 						
 						if(str_cmp("/testRequest", responseURL))
 						{
-							responseText = "";
+							responseText = "none";
 							if(twitchState->requestVideoIdx)
 							{
 								responseText = twitchState->requestVideos[--twitchState->requestVideoIdx];
@@ -670,8 +670,11 @@ void platform_listen_poll_urls()
 						response.Headers.KnownHeaders[HttpHeaderAllow].RawValueLength = 29;
 						response.Headers.UnknownHeaderCount = 1;
 						response.Headers.pUnknownHeaders = &allowCrossOriginHeader;
-						response.EntityChunkCount = 1;
-						response.pEntityChunks = &responeBody;
+						if(responseText)
+						{
+							response.EntityChunkCount = 1;
+							response.pEntityChunks = &responeBody;
+						}
 						ULONG bytesSend;
 						
 						ULONG result = 
@@ -808,15 +811,16 @@ void play_sound(char* mp3File, uint32_t fileSize, bool loop, float volume)
 			while (fileSize != 0)
 			{
 				mp3dec_frame_info_t info;
-				
-				int sampleCount = mp3dec_decode_frame(&mp3d, ( uint8_t *)mp3File,
-																							fileSize, samples, &info);
-				printf("samples = %d\n", sampleCount);
+	
+				int sampleCount = mp3dec_decode_frame(&mp3d, ( uint8_t *)mp3File, fileSize, samples, &info);
+				// CAKEZ_TRACE("Number of Samples: %d, Size in Bytes: %d", s.sampleCount, s.sampleCount * sizeof(short));																		
 				
 				fileSize -= info.frame_bytes;
 				mp3File += info.frame_bytes;
 				samples += sampleCount;
 				s.sampleCount += sampleCount;
+
+				CAKEZ_ASSERT(s.sampleCount * sizeof(short) < SOUND_BUFFER_SIZE, "Sound buffer too small!");
 			}
 		}
 		
