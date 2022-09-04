@@ -1,3 +1,7 @@
+
+#define array_count(marr) (sizeof(marr) / sizeof(marr[0]))
+#define DEFAULT_BUFFER_SIZE 128
+
 #include "logger.h"
 #include <string.h>
 

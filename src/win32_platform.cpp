@@ -716,6 +716,101 @@ int main()
 		return -1;
 	}
 	
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		PARSE CONFIG START		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	{
+		FILE* file = fopen("config.txt", "r");
+		if(!file)
+		{
+			CAKEZ_FATAL("Couldn't open config.txt");
+			return -1;
+		}
+		
+		fseek(file, 0, SEEK_END);
+		size_t file_size = ftell(file);
+		fseek(file, 0, SEEK_SET);
+		
+		char* content = (char*)malloc(file_size + 1);
+		
+		int char_count = fread(content, 1, file_size, file);
+		fclose(file);
+		content[char_count] = 0;
+		
+		struct ConfigField
+		{
+			int type;
+			char* name;
+			void* target;
+		};
+		
+		ConfigField config_fields[] = {
+			{0, "refresh_token", REFRESH_TOKEN},
+			{0, "client_id", CLIENT_ID},
+			{0, "client_secret", CLIENT_SECRET},
+			{1, "broadcaster_id", &BROADCASTER_ID},
+		};
+		
+		for(int config_field_index = 0; config_field_index < array_count(config_fields); config_field_index++)
+		{
+			ConfigField current_field = config_fields[config_field_index];
+			
+			char* found_field = strstr(content, current_field.name);
+			if(!found_field)
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Couldn't find '%s' in config.txt", current_field.name);
+				CAKEZ_FATAL(buffer);				
+			}
+			found_field += strlen(current_field.name);
+			
+			// @Note(tkap, 04/09/2022): We are not allowing spaces currently
+			if(*found_field != '=')
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Expected '=' after '%s'", current_field.name);
+				CAKEZ_FATAL(buffer);
+			}
+			
+			// @Note(tkap, 04/09/2022): Skip the '='
+			found_field += 1;
+			
+			char* start = found_field;
+			char* end = start;
+			while(true)
+			{
+				if(*end == 0 || *end == '\n')
+				{
+					break;
+				}
+				end += 1;
+			}
+			
+			size_t len = end - start;
+			CAKEZ_ASSERT(len < DEFAULT_BUFFER_SIZE, 0);
+			
+			switch(current_field.type)
+			{
+				// @Note(tkap, 04/09/2022): String
+				case 0:
+				{
+					memcpy(current_field.target, start, len);
+				} break;
+				
+				// @Note(tkap, 04/09/2022): uint32_t
+				case 1:
+				{
+					char buffer[DEFAULT_BUFFER_SIZE] = {};
+					memcpy(buffer, start, len);
+					*(uint32_t*)current_field.target = atoi(buffer);
+				} break;
+			}
+		}
+		
+		free(content);
+		
+	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		PARSE CONFIG END		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+	
+	
 	// Iinitialize HTTP
 	{
 		if(HttpInitialize(HTTPAPI_VERSION_1, HTTP_INITIALIZE_SERVER, 0) != NO_ERROR)
