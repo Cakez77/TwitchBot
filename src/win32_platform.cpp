@@ -759,19 +759,30 @@ int main()
 				char buffer[DEFAULT_BUFFER_SIZE] = {};
 				sprintf(buffer, "Couldn't find '%s' in config.txt", current_field.name);
 				CAKEZ_FATAL(buffer);				
+				return -1;
 			}
 			found_field += strlen(current_field.name);
 			
-			// @Note(tkap, 04/09/2022): We are not allowing spaces currently
+			// @Note(tkap, 04/09/2022): Make sure that we are on a '=' (Spaces in between field name and '=' are not allowed)
 			if(*found_field != '=')
 			{
 				char buffer[DEFAULT_BUFFER_SIZE] = {};
 				sprintf(buffer, "Expected '=' after '%s'", current_field.name);
 				CAKEZ_FATAL(buffer);
+				return -1;
 			}
 			
 			// @Note(tkap, 04/09/2022): Skip the '='
 			found_field += 1;
+			
+			// @Note(tkap, 04/09/2022): Spaces in between '[field_name]=' and value are not allowed
+			if(*found_field == ' ')
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Space after '%s=' is not allowed", current_field.name);
+				CAKEZ_FATAL(buffer);
+				return -1;
+			}
 			
 			char* start = found_field;
 			char* end = start;
