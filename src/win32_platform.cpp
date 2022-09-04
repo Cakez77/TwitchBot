@@ -721,7 +721,14 @@ int main()
 		FILE* file = fopen("config.txt", "r");
 		if(!file)
 		{
-			CAKEZ_FATAL("Couldn't open config.txt");
+			CAKEZ_FATAL(
+				"Couldn't open config.txt\n"
+				"Create config.txt file. It should look like:\n"
+				"\trefresh_token=YOUR_REFRESH_TOKEN_HERE\n"
+				"\tclient_id=YOUR_CLIENT_ID_HERE\n"
+				"\tclient_secret=YOUR_CLIENT_SECRET_HERE\n"
+				"\tbroadcaster_id=YOUR_BROADCASTER_ID_HERE\n"
+			);
 			return -1;
 		}
 		
