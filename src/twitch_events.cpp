@@ -389,9 +389,6 @@ void manage_twitch_events()
 	sprintf(header, "Authorization: Bearer %s\r\nClient-Id: %s", 
 					twitchState->oAuthToken, CLIENT_ID);
 	
-	// Initialize random Seed
-	auto seed = platform_get_performance_tick_count();
-	
 	while (true)		
 	{
 		uint32_t redemptionTextLength = 0;
@@ -483,6 +480,9 @@ void manage_twitch_events()
 					{
 						if(twitchState->requestVideoIdx + 1 < MAX_REQUEST_VIDEOS)
 						{
+							// Initialize random Seed
+							auto seed = platform_get_performance_tick_count();
+							srand(seed);
 							twitchState->videoIdx = rand() % ArraySize(videos);
 							twitchState->requestVideos[twitchState->requestVideoIdx++] = 
 								videos[twitchState->videoIdx];

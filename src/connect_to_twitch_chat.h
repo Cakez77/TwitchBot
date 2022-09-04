@@ -98,6 +98,8 @@ void connect_to_chat(char *token)
 				};
 				char *commands[]{
 					"!cakez",
+					"!support",
+					"!patreon",
 					"!yt",
 					"!discord",
 					"!poe",
@@ -108,6 +110,8 @@ void connect_to_chat(char *token)
 				
 				char *replies[]{
 					"PRIVMSG #cakez77 :I'm currently working on a tower defence game CakezTD cakez7Rg %s. Idea-> https://www.youtube.com/watch?v=mC8oUPnN6Jg . Gameplay-> https://clips.twitch.tv/IcyMistyCodM4xHeh-CwaedeFFWsFZfbpO\r\n",
+					"PRIVMSG #cakez77 :If you want to support my journey check out the description.\r\n",
+					"PRIVMSG #cakez77 :Support me and get access to the game code and Pixel Art: https://www.patreon.com/Cakez77\r\n",
 					"PRIVMSG #cakez77 :Shameless plug cakez7E %s cakez7E -> https://www.youtube.com/channel/UCL7bBOIdfxxM9WyxTnTk7Qg\r\n",
 					"PRIVMSG #cakez77 :Come join our Discord  %s cakez7E -> https://discord.gg/KUCHXVcSFA\r\n",
 					"PRIVMSG #cakez77 :Streaming Path of Exile at the end of every programming Stream, if you want to support me %s, keep watching!\r\n",

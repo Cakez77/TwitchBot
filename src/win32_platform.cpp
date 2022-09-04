@@ -38,7 +38,7 @@ constexpr uint32_t MAX_REQUESTS = 50;
 constexpr uint32_t MAX_POLL_URL_COUNT = 5;
 
 // Sound
-constexpr uint32_t SOUND_BUFFER_SIZE = MB(25);
+constexpr uint32_t SOUND_BUFFER_SIZE = MB(40);
 constexpr uint32_t MAX_ALLOCATED_SOUNDS = 20;
 constexpr uint32_t MAX_PLAYING_SOUNDS = 5;
 
@@ -429,12 +429,14 @@ void platform_update_sound()
 	soundBuffer->GetCurrentPosition((LPDWORD)&playCursor, (LPDWORD)&writeCursor);
 	if (playCursor == writeCursor)
 	{
-		CAKEZ_ASSERT(0, "Dunno bro? Why?");
+		//CAKEZ_ASSERT(0, "Dunno bro? Why?");
+		CAKEZ_WARN("Play Cursor == Write Cursor for Sound, dunno why???");
 		
 		// Try playing the soundBuffer again??
 		if (soundBuffer->Play(0, 0, DSBPLAY_LOOPING) != DS_OK)
 		{
 			CAKEZ_ASSERT(0, "Failed to play Secondary Buffer");
+			return;
 		}
 	}
 	DSBCAPS bufferCaps = {};
@@ -698,8 +700,8 @@ int main()
 {
 	// Allocate App Memory
 	AppMemory memory = {};
-	memory.memory = (uint8_t *)malloc(MB(50));
-	memory.size = MB(50);
+	memory.memory = (uint8_t *)malloc(MB(100));
+	memory.size = MB(100);
 	
 	if(!platform_create_window(100, 100, "Test"))
 	{
@@ -811,7 +813,7 @@ void play_sound(char* mp3File, uint32_t fileSize, bool loop, float volume)
 			while (fileSize != 0)
 			{
 				mp3dec_frame_info_t info;
-	
+				
 				int sampleCount = mp3dec_decode_frame(&mp3d, ( uint8_t *)mp3File, fileSize, samples, &info);
 				// CAKEZ_TRACE("Number of Samples: %d, Size in Bytes: %d", s.sampleCount, s.sampleCount * sizeof(short));																		
 				
@@ -819,7 +821,7 @@ void play_sound(char* mp3File, uint32_t fileSize, bool loop, float volume)
 				mp3File += info.frame_bytes;
 				samples += sampleCount;
 				s.sampleCount += sampleCount;
-
+				
 				CAKEZ_ASSERT(s.sampleCount * sizeof(short) < SOUND_BUFFER_SIZE, "Sound buffer too small!");
 			}
 		}
