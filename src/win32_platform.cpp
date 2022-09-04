@@ -845,7 +845,7 @@ int main()
 		
 		// Create Windows handle to open HTTP Connections		
 		{
-			DWORD proxyFlag = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+			DWORD proxyFlag;
 			if(IsWindowsVersionOrGreater(6, 2, 0)) // @Note(tkap, 04/09/2022): windows 8 or greater
 			{
 				proxyFlag = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
