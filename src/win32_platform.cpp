@@ -17,6 +17,7 @@
 
 // Windows
 #include <windows.h>
+#include <versionhelpers.h>
 #include <winhttp.h>
 #include <dsound.h>
 
@@ -729,13 +730,37 @@ int main()
 			return -1;
 		}
 		
-		// Create Windows handle to open HTTP Connections
-		if (!(win32HTTPState.globalInstance = WinHttpOpen(L"PleaseJustLetMeCreateThisOkay", 
-																											WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, 0, 0, 0)))
+		// Create Windows handle to open HTTP Connections		
 		{
-			CAKEZ_FATAL("Failed to open HTTP connection");
-			return -1;
+			DWORD proxyFlag = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+			if(IsWindowsVersionOrGreater(6, 2, 0)) // @Note(tkap, 04/09/2022): windows 8 or greater
+			{
+				proxyFlag = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+			}
+			else
+			{
+				proxyFlag = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+			}
+			win32HTTPState.globalInstance = WinHttpOpen(
+				L"PleaseJustLetMeCreateThisOkay", 
+				proxyFlag,
+				0, 0, 0
+			);
+			
+			if(!win32HTTPState.globalInstance)
+			{
+				CAKEZ_FATAL("Failed to open HTTP connection");
+				return -1;
+			}
 		}
+		
+		DWORD secure_protocols = WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1;
+		// @Note(tkap, 04/09/2022): https://stackoverflow.com/a/47393774/6488590
+		if (!IsWindowsVersionOrGreater(6, 2, 0)) // if NOT greater than windows 7 (stackoverflow answer does the opposite, but that doesn't work for me)
+		{
+			secure_protocols += WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+		}
+		WinHttpSetOption(win32HTTPState.globalInstance, WINHTTP_OPTION_SECURE_PROTOCOLS, &secure_protocols, sizeof(secure_protocols));
 		
 		// TODO: Mabye useful in the future
 		//localApi = platform_connect_to_server("localhost", false);
