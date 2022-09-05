@@ -2,3 +2,4 @@
 .vscode
 main.*
 local_server
+config.txt

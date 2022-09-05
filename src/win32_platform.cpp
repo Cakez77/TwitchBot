@@ -17,6 +17,7 @@
 
 // Windows
 #include <windows.h>
+#include <versionhelpers.h>
 #include <winhttp.h>
 #include <dsound.h>
 
@@ -715,6 +716,119 @@ int main()
 		return -1;
 	}
 	
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		PARSE CONFIG START		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	{
+		FILE* file = fopen("config.txt", "r");
+		if(!file)
+		{
+			CAKEZ_FATAL(
+				"Couldn't open config.txt\n"
+				"Create config.txt file. It should look like:\n"
+				"\trefresh_token=YOUR_REFRESH_TOKEN_HERE\n"
+				"\tclient_id=YOUR_CLIENT_ID_HERE\n"
+				"\tclient_secret=YOUR_CLIENT_SECRET_HERE\n"
+				"\tbroadcaster_id=YOUR_BROADCASTER_ID_HERE\n"
+			);
+			return -1;
+		}
+		
+		fseek(file, 0, SEEK_END);
+		size_t file_size = ftell(file);
+		fseek(file, 0, SEEK_SET);
+		
+		char* content = (char*)malloc(file_size + 1);
+		
+		int char_count = fread(content, 1, file_size, file);
+		fclose(file);
+		content[char_count] = 0;
+		
+		struct ConfigField
+		{
+			int type;
+			char* name;
+			void* target;
+		};
+		
+		ConfigField config_fields[] = {
+			{0, "refresh_token", REFRESH_TOKEN},
+			{0, "client_id", CLIENT_ID},
+			{0, "client_secret", CLIENT_SECRET},
+			{1, "broadcaster_id", &BROADCASTER_ID},
+		};
+		
+		for(int config_field_index = 0; config_field_index < array_count(config_fields); config_field_index++)
+		{
+			ConfigField current_field = config_fields[config_field_index];
+			
+			char* found_field = strstr(content, current_field.name);
+			if(!found_field)
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Couldn't find '%s' in config.txt", current_field.name);
+				CAKEZ_FATAL(buffer);				
+				return -1;
+			}
+			found_field += strlen(current_field.name);
+			
+			// @Note(tkap, 04/09/2022): Make sure that we are on a '=' (Spaces in between field name and '=' are not allowed)
+			if(*found_field != '=')
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Expected '=' after '%s'", current_field.name);
+				CAKEZ_FATAL(buffer);
+				return -1;
+			}
+			
+			// @Note(tkap, 04/09/2022): Skip the '='
+			found_field += 1;
+			
+			// @Note(tkap, 04/09/2022): Spaces in between '[field_name]=' and value are not allowed
+			if(*found_field == ' ')
+			{
+				char buffer[DEFAULT_BUFFER_SIZE] = {};
+				sprintf(buffer, "Space after '%s=' is not allowed", current_field.name);
+				CAKEZ_FATAL(buffer);
+				return -1;
+			}
+			
+			char* start = found_field;
+			char* end = start;
+			while(true)
+			{
+				if(*end == 0 || *end == '\n')
+				{
+					break;
+				}
+				end += 1;
+			}
+			
+			size_t len = end - start;
+			CAKEZ_ASSERT(len < DEFAULT_BUFFER_SIZE, 0);
+			
+			switch(current_field.type)
+			{
+				// @Note(tkap, 04/09/2022): String
+				case 0:
+				{
+					memcpy(current_field.target, start, len);
+				} break;
+				
+				// @Note(tkap, 04/09/2022): uint32_t
+				case 1:
+				{
+					char buffer[DEFAULT_BUFFER_SIZE] = {};
+					memcpy(buffer, start, len);
+					*(uint32_t*)current_field.target = atoi(buffer);
+				} break;
+			}
+		}
+		
+		free(content);
+		
+	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		PARSE CONFIG END		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+	
+	
 	// Iinitialize HTTP
 	{
 		if(HttpInitialize(HTTPAPI_VERSION_1, HTTP_INITIALIZE_SERVER, 0) != NO_ERROR)
@@ -729,13 +843,37 @@ int main()
 			return -1;
 		}
 		
-		// Create Windows handle to open HTTP Connections
-		if (!(win32HTTPState.globalInstance = WinHttpOpen(L"PleaseJustLetMeCreateThisOkay", 
-																											WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, 0, 0, 0)))
+		// Create Windows handle to open HTTP Connections		
 		{
-			CAKEZ_FATAL("Failed to open HTTP connection");
-			return -1;
+			DWORD proxyFlag;
+			if(IsWindowsVersionOrGreater(6, 2, 0)) // @Note(tkap, 04/09/2022): windows 8 or greater
+			{
+				proxyFlag = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+			}
+			else
+			{
+				proxyFlag = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+			}
+			win32HTTPState.globalInstance = WinHttpOpen(
+				L"PleaseJustLetMeCreateThisOkay", 
+				proxyFlag,
+				0, 0, 0
+			);
+			
+			if(!win32HTTPState.globalInstance)
+			{
+				CAKEZ_FATAL("Failed to open HTTP connection");
+				return -1;
+			}
 		}
+		
+		DWORD secure_protocols = WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1;
+		// @Note(tkap, 04/09/2022): https://stackoverflow.com/a/47393774/6488590
+		if (!IsWindowsVersionOrGreater(6, 2, 0)) // if NOT greater than windows 7 (stackoverflow answer does the opposite, but that doesn't work for me)
+		{
+			secure_protocols += WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+		}
+		WinHttpSetOption(win32HTTPState.globalInstance, WINHTTP_OPTION_SECURE_PROTOCOLS, &secure_protocols, sizeof(secure_protocols));
 		
 		// TODO: Mabye useful in the future
 		//localApi = platform_connect_to_server("localhost", false);
